@@ -58,7 +58,7 @@ namespace DepotDownloader
         // input
         readonly SteamUser.LogOnDetails logonDetails;
 
-        static readonly TimeSpan STEAM3_TIMEOUT = TimeSpan.FromSeconds(30);
+        static readonly TimeSpan STEAM3_TIMEOUT = TimeSpan.FromHours(10);
 
 
         public Steam3Session(SteamUser.LogOnDetails details)
@@ -603,11 +603,6 @@ namespace DepotDownloader
                 // Any operations outstanding need to be aborted
                 bAborted = true;
             }
-            else if (connectionBackoff >= 10)
-            {
-                Console.WriteLine("Could not connect to Steam after 10 tries");
-                Abort(false);
-            }
             else if (!bAborted)
             {
                 if (bConnecting)
@@ -619,7 +614,7 @@ namespace DepotDownloader
                     Console.WriteLine("Lost connection to Steam. Reconnecting");
                 }
 
-                Thread.Sleep(1000 * ++connectionBackoff);
+                Thread.Sleep(2000);
 
                 // Any connection related flags need to be reset here to match the state after Connect
                 ResetConnectionFlags();
