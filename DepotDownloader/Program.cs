@@ -11,6 +11,7 @@ using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using SteamKit2;
+using SteamKit2.CDN;
 
 namespace DepotDownloader
 {
@@ -63,6 +64,21 @@ namespace DepotDownloader
             var password = GetParameter<string>(args, "-password") ?? GetParameter<string>(args, "-pass");
             ContentDownloader.Config.RememberPassword = HasParameter(args, "-remember-password");
             ContentDownloader.Config.UseQrCode = HasParameter(args, "-qr");
+
+            if (username == null)
+            {
+                if (ContentDownloader.Config.RememberPassword)
+                {
+                    Console.WriteLine("Error: -remember-password can not be used without -username.");
+                    return 1;
+                }
+
+                if (ContentDownloader.Config.UseQrCode)
+                {
+                    Console.WriteLine("Error: -qr can not be used without -username.");
+                    return 1;
+                }
+            }
 
             ContentDownloader.Config.DownloadManifestOnly = HasParameter(args, "-manifest-only");
 
@@ -117,9 +133,24 @@ namespace DepotDownloader
             ContentDownloader.Config.InstallDirectory = GetParameter<string>(args, "-dir");
 
             ContentDownloader.Config.VerifyAll = HasParameter(args, "-verify-all") || HasParameter(args, "-verify_all") || HasParameter(args, "-validate");
-            ContentDownloader.Config.MaxServers = GetParameter(args, "-max-servers", 20);
+
+            if (HasParameter(args, "-use-lancache"))
+            {
+                await Client.DetectLancacheServerAsync();
+                if (Client.UseLancacheServer)
+                {
+                    Console.WriteLine("Detected Lancache server! Downloads will be directed through the Lancache.");
+
+                    // Increasing the number of concurrent downloads when the cache is detected since the downloads will likely
+                    // be served much faster than over the internet.  Steam internally has this behavior as well.
+                    if (!HasParameter(args, "-max-downloads"))
+                    {
+                        ContentDownloader.Config.MaxDownloads = 25;
+                    }
+                }
+            }
+
             ContentDownloader.Config.MaxDownloads = GetParameter(args, "-max-downloads", 8);
-            ContentDownloader.Config.MaxServers = Math.Max(ContentDownloader.Config.MaxServers, ContentDownloader.Config.MaxDownloads);
             ContentDownloader.Config.LoginID = HasParameter(args, "-loginid") ? GetParameter<uint>(args, "-loginid") : null;
 
             #endregion
@@ -208,7 +239,7 @@ namespace DepotDownloader
                 #region App downloading
 
                 var branch = GetParameter<string>(args, "-branch") ?? GetParameter<string>(args, "-beta") ?? ContentDownloader.DEFAULT_BRANCH;
-                ContentDownloader.Config.BetaPassword = GetParameter<string>(args, "-betapassword");
+                ContentDownloader.Config.BetaPassword = GetParameter<string>(args, "-branchpassword") ?? GetParameter<string>(args, "-betapassword");
 
                 ContentDownloader.Config.DownloadAllPlatforms = HasParameter(args, "-all-platforms");
 
@@ -325,6 +356,21 @@ namespace DepotDownloader
                 }
             }
 
+            if (!string.IsNullOrEmpty(password))
+            {
+                const int MAX_PASSWORD_SIZE = 64;
+
+                if (password.Length > MAX_PASSWORD_SIZE)
+                {
+                    Console.Error.WriteLine($"Warning: Password is longer than {MAX_PASSWORD_SIZE} characters, which is not supported by Steam.");
+                }
+
+                if (!password.All(char.IsAscii))
+                {
+                    Console.Error.WriteLine("Warning: Password contains non-ASCII characters, which is not supported by Steam.");
+                }
+            }
+
             return ContentDownloader.InitializeSteam3(username, password);
         }
 
@@ -407,8 +453,8 @@ namespace DepotDownloader
             Console.WriteLine("  -app <#>                 - the AppID to download.");
             Console.WriteLine("  -depot <#>               - the DepotID to download.");
             Console.WriteLine("  -manifest <id>           - manifest id of content to download (requires -depot, default: current for branch).");
-            Console.WriteLine($"  -beta <branchname>       - download from specified branch if available (default: {ContentDownloader.DEFAULT_BRANCH}).");
-            Console.WriteLine("  -betapassword <pass>     - branch password if applicable.");
+            Console.WriteLine($"  -branch <branchname>    - download from specified branch if available (default: {ContentDownloader.DEFAULT_BRANCH}).");
+            Console.WriteLine("  -branchpassword <pass>   - branch password if applicable.");
             Console.WriteLine("  -all-platforms           - downloads all platform-specific depots when -app is used.");
             Console.WriteLine("  -all-archs               - download all architecture-specific depots when -app is used.");
             Console.WriteLine("  -os <os>                 - the operating system for which to download the game (windows, macos or linux, default: OS the program is currently running on)");
@@ -422,17 +468,22 @@ namespace DepotDownloader
             Console.WriteLine();
             Console.WriteLine("  -username <user>         - the username of the account to login to for restricted content.");
             Console.WriteLine("  -password <pass>         - the password of the account to login to for restricted content.");
-            Console.WriteLine("  -remember-password       - if set, remember the password for subsequent logins of this user. (Use -username <username> -remember-password as login credentials)");
+            Console.WriteLine("  -remember-password       - if set, remember the password for subsequent logins of this user.");
+            Console.WriteLine("                             use -username <username> -remember-password as login credentials.");
             Console.WriteLine();
             Console.WriteLine("  -dir <installdir>        - the directory in which to place downloaded files.");
-            Console.WriteLine("  -filelist <file.txt>     - a list of files to download (from the manifest). Prefix file path with 'regex:' if you want to match with regex.");
-            Console.WriteLine("  -validate                - Include checksum verification of files already downloaded");
+            Console.WriteLine("  -filelist <file.txt>     - the name of a local file that contains a list of files to download (from the manifest).");
+            Console.WriteLine("                             prefix file path with `regex:` if you want to match with regex. each file path should be on their own line.");
             Console.WriteLine();
+            Console.WriteLine("  -validate                - include checksum verification of files already downloaded");
             Console.WriteLine("  -manifest-only           - downloads a human readable manifest for any depots that would be downloaded.");
             Console.WriteLine("  -cellid <#>              - the overridden CellID of the content server to download from.");
-            Console.WriteLine("  -max-servers <#>         - maximum number of content servers to use. (default: 20).");
             Console.WriteLine("  -max-downloads <#>       - maximum number of chunks to download concurrently. (default: 8).");
             Console.WriteLine("  -loginid <#>             - a unique 32-bit integer Steam LogonID in decimal, required if running multiple instances of DepotDownloader concurrently.");
+            Console.WriteLine("  -use-lancache            - forces downloads over the local network via a Lancache instance.");
+            Console.WriteLine();
+            Console.WriteLine("  -debug                   - enable verbose debug logging.");
+            Console.WriteLine("  -V or --version          - print version and runtime.");
         }
 
         static void PrintVersion(bool printExtra = false)
